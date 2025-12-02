@@ -19,10 +19,7 @@
 | 文件 | 说明 |
 |------|------|
 | `worker.js` | CF Worker 代码，复制到 Cloudflare 部署 |
-| `test_quick.py` | 快速测试脚本（基本功能） |
-| `test_simple.py` | 简单测试脚本（对话+流式） |
-| `test_full.py` | 完整功能测试脚本 |
-| `test_image.py` | 图像生成测试脚本 |
+
 
 ## 部署步骤
 
@@ -149,19 +146,6 @@ API 代理地址: https://your-worker.workers.dev/v1
 API Key: 你的 fal API Key
 ```
 
-## 常用模型
-
-| 模型 | 特点 |
-|------|------|
-| `google/gemini-2.0-flash-001` | 快速、便宜、支持图片 |
-| `google/gemini-2.5-flash` | 支持深度思考推理 |
-| `google/gemini-3-pro-image-preview` | 图像生成 |
-| `anthropic/claude-3-5-sonnet-latest` | 最强编程能力 |
-| `anthropic/claude-3-5-haiku-latest` | Claude 快速版 |
-| `openai/gpt-4o` | GPT-4o |
-| `openai/gpt-4o-mini` | 性价比高 |
-| `x-ai/grok-4.1-fast:free` | 免费模型 |
-| `openai/text-embedding-3-small` | Embeddings |
 
 ## 版本历史
 
