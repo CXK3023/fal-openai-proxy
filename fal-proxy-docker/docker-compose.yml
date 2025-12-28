@@ -1,0 +1,46 @@
+# fal-proxy Docker Compose 配置
+# 
+# 部署步骤:
+#   1. docker compose build
+#   2. docker compose up -d
+#
+# 使用方式:
+#   - API 地址: http://localhost:8787/v1
+#   - 认证: Authorization: Bearer YOUR_FAL_KEY
+
+services:
+  fal-proxy:
+    build: .
+    container_name: fal-proxy
+    ports:
+      - "8787:8787"
+    environment:
+      # 端口配置（可选，默认 8787）
+      - PORT=8787
+      # 默认 FAL API Key（可选，请求可通过 Header 覆盖）
+      # - FAL_KEY=your-fal-api-key
+    restart: unless-stopped
+    # 资源限制（可根据需要调整）
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 网络配置（如果需要与 NewAPI 在同一网络）
+    # networks:
+    #   - newapi-network
+
+# 如果 NewAPI 使用自定义网络，取消下面的注释并配置
+# networks:
+#   newapi-network:
+#     external: true
+
