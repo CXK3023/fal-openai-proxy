@@ -10,6 +10,7 @@
  * - 智能 image_config（仅 Gemini/Seedream）：默认 4K 1:1，支持从提示词解析
  * - 图像生成响应自动转换为 Markdown 图片格式（只返回第一张）
  * - 思考模型自动路由（xxx-thinking -> xxx + reasoning.enabled，不区分大小写）
+ * - 通用 CORS 代理（/proxy?url=xxx）：转发任意请求并添加 CORS 头
  * 
  * 智能 image_config（仅 Gemini/Seedream）优先级：提示词 > 请求参数 > 默认值(4K, 1:1)
  * 支持的提示词关键词：1K/2K/4K, 16:9/9:16/1:1, 横屏/竖屏/方形
@@ -85,7 +86,7 @@ export default {
     if (url.pathname === "/" || url.pathname === "") {
       return jsonResponse({
         service: "fal OpenRouter Proxy",
-        version: "1.12.0",
+        version: "1.13.0",
         usage: {
           base_url: `${url.origin}/v1`,
           api_key: "your-fal-api-key",
@@ -98,6 +99,7 @@ export default {
           "/v1/responses",
           "/v1/dashboard/billing/subscription",
           "/v1/dashboard/billing/credit_grants",
+          "/proxy?url=<target_url> (通用 CORS 代理)",
         ],
         features: [
           "思考模型自动路由（xxx-thinking -> xxx + reasoning.enabled，不区分大小写）",
@@ -105,6 +107,7 @@ export default {
           "智能 image_config（仅 Gemini/Seedream）：默认 4K 1:1，支持从提示词解析",
           "图像生成响应自动转换为 Markdown 图片格式（只返回第一张）",
           "模型列表合并 frontend API，包含完整图像模型",
+          "通用 CORS 代理：/proxy?url=xxx 转发请求并添加 CORS 头",
         ],
         thinking_models: THINKING_MODEL_MAPPINGS,
         image_config: {
@@ -116,12 +119,24 @@ export default {
           },
           priority: "提示词 > 请求参数 > 默认值",
         },
+        proxy: {
+          endpoint: "/proxy?url=<encoded_url>",
+          description: "通用 CORS 代理，转发请求并添加 CORS 头",
+          example: `${url.origin}/proxy?url=${encodeURIComponent("https://api.fal.ai/v1/models/usage")}`,
+          supported_methods: ["GET", "POST", "PUT", "DELETE"],
+          note: "请求头会被透传，响应会添加 CORS 头",
+        },
         limitations: [
           "Gemini 4K 可能因 CF Worker 超时（100s）失败",
           "seedream-4.5 4K 正常工作（约 15s）",
         ],
         docs: "https://fal.ai/models/openrouter/router",
       });
+    }
+
+    // 通用 CORS 代理端点
+    if (url.pathname === "/proxy") {
+      return await handleProxyRequest(request, url);
     }
 
     // /v1/models 端点 - 从 OpenRouter 官方获取模型列表
@@ -190,7 +205,7 @@ export default {
     headers.set("Authorization", `Key ${falKey}`);
     headers.set("Content-Type", "application/json");
     headers.set("Accept", request.headers.get("Accept") || "application/json");
-    
+
     // 透传 User-Agent
     const userAgent = request.headers.get("User-Agent");
     if (userAgent) {
@@ -207,12 +222,12 @@ export default {
       try {
         const bodyText = await request.text();
         let body = JSON.parse(bodyText);
-        
+
         // 处理思考模型路由
         if (body.model) {
           body = applyThinkingModelRouting(body);
         }
-        
+
         // 为图像生成模型添加 modalities 参数和智能 image_config
         if (body.model && isImageGenerationModel(body.model)) {
           if (!body.modalities || !Array.isArray(body.modalities)) {
@@ -221,7 +236,7 @@ export default {
           // 应用智能 image_config（提示词 > 请求参数 > 默认 4K 1:1）
           body = applySmartImageConfig(body);
         }
-        
+
         fetchOptions.body = JSON.stringify(body);
       } catch (e) {
         // JSON 解析失败，使用原始请求
@@ -260,7 +275,7 @@ export default {
 
       // 非流式响应：检查并转换图像格式
       const data = await response.text();
-      
+
       if (contentType.includes("application/json")) {
         try {
           const jsonData = JSON.parse(data);
@@ -300,14 +315,14 @@ export default {
  */
 function applyThinkingModelRouting(body) {
   const model = body.model;
-  
+
   // 检查是否在映射表中
   if (THINKING_MODEL_MAPPINGS[model]) {
     body.model = THINKING_MODEL_MAPPINGS[model];
     body.reasoning = { enabled: true };
     return body;
   }
-  
+
   // 通用规则：如果模型名以 -thinking 结尾（不区分大小写），自动处理
   const thinkingMatch = model.match(/-thinking$/i);
   if (thinkingMatch) {
@@ -315,7 +330,7 @@ function applyThinkingModelRouting(body) {
     body.model = actualModel;
     body.reasoning = { enabled: true };
   }
-  
+
   return body;
 }
 
@@ -331,8 +346,8 @@ function isImageGenerationModel(model) {
   }
   // 通用规则：模型名包含 image 或 seedream 或 flux 或 riverflow
   return modelLower.includes("-image") || modelLower.includes("image-") ||
-         modelLower.includes("seedream") || modelLower.includes("flux") ||
-         modelLower.includes("riverflow");
+    modelLower.includes("seedream") || modelLower.includes("flux") ||
+    modelLower.includes("riverflow");
 }
 
 /**
@@ -341,19 +356,19 @@ function isImageGenerationModel(model) {
  */
 function parseImageConfigFromPrompt(messages) {
   if (!messages || !Array.isArray(messages)) return {};
-  
+
   // 获取最后一条用户消息
   const userMessages = messages.filter(m => m.role === "user");
   if (userMessages.length === 0) return {};
-  
+
   const lastMessage = userMessages[userMessages.length - 1];
-  const content = typeof lastMessage.content === "string" 
-    ? lastMessage.content 
+  const content = typeof lastMessage.content === "string"
+    ? lastMessage.content
     : (lastMessage.content?.find?.(c => c.type === "text")?.text || "");
-  
+
   const contentLower = content.toLowerCase();
   const result = {};
-  
+
   // 检测分辨率关键词
   if (/\b4k\b/i.test(content)) {
     result.image_size = "4K";
@@ -362,7 +377,7 @@ function parseImageConfigFromPrompt(messages) {
   } else if (/\b1k\b/i.test(content)) {
     result.image_size = "1K";
   }
-  
+
   // 检测宽高比关键词
   // 精确比例
   if (/16[:：]9/.test(content)) {
@@ -388,7 +403,7 @@ function parseImageConfigFromPrompt(messages) {
   } else if (/方(形|图)|square|正方/i.test(content)) {
     result.aspect_ratio = "1:1";
   }
-  
+
   return result;
 }
 
@@ -401,20 +416,20 @@ function applySmartImageConfig(body) {
   // 只对已测试的模型应用智能配置
   const modelLower = (body.model || "").toLowerCase();
   const shouldApply = SMART_IMAGE_CONFIG_MODELS.some(m => m.toLowerCase() === modelLower);
-  
+
   if (!shouldApply) {
     return body;
   }
-  
+
   // 从提示词解析配置
   const promptConfig = parseImageConfigFromPrompt(body.messages);
-  
+
   // 合并配置（优先级: 提示词 > 请求参数 > 默认值）
   const finalConfig = {
     image_size: promptConfig.image_size || body.image_config?.image_size || IMAGE_MODEL_DEFAULTS.image_size,
     aspect_ratio: promptConfig.aspect_ratio || body.image_config?.aspect_ratio || IMAGE_MODEL_DEFAULTS.aspect_ratio,
   };
-  
+
   body.image_config = finalConfig;
   return body;
 }
@@ -470,13 +485,13 @@ async function fetchFalBalanceOpenAIFormat(apiKey, format = "subscription") {
       try {
         const errorData = await response.json();
         errorMsg = errorData.detail || errorData.message || errorMsg;
-      } catch (e) {}
+      } catch (e) { }
       return jsonResponse({ error: { message: errorMsg, type: "upstream_error" } }, response.status);
     }
 
     const balanceText = await response.text();
     const rawBalance = parseFloat(balanceText);
-    
+
     if (isNaN(rawBalance)) {
       return jsonResponse({ error: { message: "Invalid balance format", type: "parse_error" } }, 502);
     }
@@ -496,7 +511,7 @@ async function fetchFalBalanceOpenAIFormat(apiKey, format = "subscription") {
         access_until: Math.floor(Date.now() / 1000) + 86400 * 365, // 1年后
       });
     }
-    
+
     if (format === "credit_grants") {
       // /dashboard/billing/credit_grants 格式
       const balanceCents = Math.round(balance * 100);
@@ -576,7 +591,7 @@ async function fetchOpenRouterModels() {
       try {
         const imageData = await imageModelsResponse.json();
         const imageModels = imageData?.data?.models || [];
-        
+
         // 将缺失的图像模型添加到列表中
         for (const imgModel of imageModels) {
           const modelId = imgModel.slug;
@@ -646,4 +661,94 @@ function jsonResponse(data, status = 200) {
     status,
     headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
+
+/**
+ * 通用 CORS 代理
+ * 转发请求到目标 URL 并添加 CORS 头
+ */
+async function handleProxyRequest(request, url) {
+  // 获取目标 URL
+  const targetUrl = url.searchParams.get("url");
+
+  if (!targetUrl) {
+    return jsonResponse({
+      error: {
+        message: "Missing 'url' parameter. Usage: /proxy?url=<encoded_url>",
+        type: "invalid_request",
+        example: "/proxy?url=" + encodeURIComponent("https://api.fal.ai/v1/models/usage"),
+      },
+    }, 400);
+  }
+
+  // 验证 URL 格式
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(targetUrl);
+  } catch (e) {
+    return jsonResponse({
+      error: {
+        message: "Invalid URL format",
+        type: "invalid_request",
+        provided_url: targetUrl,
+      },
+    }, 400);
+  }
+
+  // 构建请求头（透传原始请求头，但排除一些不应透传的头）
+  const headers = new Headers();
+  const excludeHeaders = ["host", "cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor", "x-forwarded-for", "x-forwarded-proto", "x-real-ip"];
+
+  for (const [key, value] of request.headers.entries()) {
+    if (!excludeHeaders.includes(key.toLowerCase())) {
+      headers.set(key, value);
+    }
+  }
+
+  // 构建 fetch 选项
+  const fetchOptions = {
+    method: request.method,
+    headers: headers,
+  };
+
+  // 对于 POST/PUT 请求，透传请求体
+  if (request.method === "POST" || request.method === "PUT" || request.method === "PATCH") {
+    fetchOptions.body = request.body;
+  }
+
+  try {
+    // 发起请求到目标服务器
+    const response = await fetch(targetUrl, fetchOptions);
+
+    // 构建响应头（添加 CORS 头）
+    const responseHeaders = new Headers(CORS_HEADERS);
+
+    // 透传响应的 Content-Type
+    const contentType = response.headers.get("Content-Type");
+    if (contentType) {
+      responseHeaders.set("Content-Type", contentType);
+    }
+
+    // 透传一些有用的响应头
+    const passHeaders = ["x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset", "x-request-id"];
+    for (const h of passHeaders) {
+      const val = response.headers.get(h);
+      if (val) responseHeaders.set(h, val);
+    }
+
+    // 返回响应
+    return new Response(response.body, {
+      status: response.status,
+      headers: responseHeaders,
+    });
+
+  } catch (error) {
+    return jsonResponse({
+      error: {
+        message: `Proxy error: ${error.message}`,
+        type: "proxy_error",
+        target_url: targetUrl,
+      },
+    }, 502);
+  }
 }
